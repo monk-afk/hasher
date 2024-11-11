@@ -1,288 +1,217 @@
---==[[================================================================================]]==--
---==[[ Pure Lua SHA - sha256.lua                                                      ]]==--
---==[[ https://github.com/Egor-Skriptunoff/pure_lua_SHA                               ]]==--
---==[[================================================================================]]==--
---==[[ MIT License                                                                    ]]==--
---==[[                                                                                ]]==--
---==[[ Copyright (c) 2018-2022  Egor Skriptunoff                                      ]]==--
---==[[                                                                                ]]==--
---==[[ Permission is hereby granted, free of charge, to any person obtaining a copy   ]]==--
---==[[ of this software and associated documentation files (the "Software"), to deal  ]]==--
---==[[ in the Software without restriction, including without limitation the rights   ]]==--
---==[[ to use, copy, modify, merge, publish, distribute, sublicense, and/or sell      ]]==--
---==[[ copies of the Software, and to permit persons to whom the Software is          ]]==--
---==[[ furnished to do so, subject to the following conditions:                       ]]==--
---==[[                                                                                ]]==--
---==[[ The above copyright notice and this permission notice shall be included in all ]]==--
---==[[ copies or substantial portions of the Software.                                ]]==--
---==[[                                                                                ]]==--
---==[[ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR     ]]==--
---==[[ IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,       ]]==--
---==[[ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE    ]]==--
---==[[ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER         ]]==--
---==[[ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,  ]]==--
---==[[ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE  ]]==--
---==[[ SOFTWARE.                                                                      ]]==--
---==[[================================================================================]]==--
-local sub = string.sub
-local byte = string.byte
-local char = string.char
-local floor = math.floor
-local unpack = table.unpack
-local math_min = math.min
-local math_max = math.max
-local string_rep = string.rep
-local table_concat = table.concat
-local string_format = string.format
+--[[================================================================================]]--
+--[[ SecureHashingAlgorithm-BitWise by Roberto Ierusalimschy used under MIT License ]]--
+--[[                                                                                ]]--
+--[[ http://lua-users.org/wiki/SecureHashAlgorithmBw                                ]]--
+--[[                                                                                ]]--
+--[[ Copyright © 1994–2024 Lua.org, PUC-Rio.                                        ]]--
+--[[                                                                                ]]--
+--[[ Permission is hereby granted, free of charge, to any person obtaining a copy   ]]--
+--[[ of this software and associated documentation files (the "Software"), to deal  ]]--
+--[[ in the Software without restriction, including without limitation the rights   ]]--
+--[[ to use, copy, modify, merge, publish, distribute, sublicense, and/or sell      ]]--
+--[[ copies of the Software, and to permit persons to whom the Software is          ]]--
+--[[ furnished to do so, subject to the following conditions:                       ]]--
+--[[                                                                                ]]--
+--[[ The above copyright notice and this permission notice shall be included in     ]]--
+--[[ all copies or substantial portions of the Software.                            ]]--
+--[[                                                                                ]]--
+--[[ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR     ]]--
+--[[ IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,       ]]--
+--[[ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE    ]]--
+--[[ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER         ]]--
+--[[ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,  ]]--
+--[[ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE  ]]--
+--[[ SOFTWARE.                                                                      ]]--
+--[[                                                                                ]]--
+--[[ https://www.lua.org/license.html                                               ]]--
+--[[================================================================================]]--
 
-local AND_of_two_bytes = {[0] = 0}
-local idx = 0
-for y = 0, 127 * 256, 256 do
-  for x = y, y + 127 do
-    x = AND_of_two_bytes[x] * 2
-    AND_of_two_bytes[idx] = x
-    AND_of_two_bytes[idx + 1] = x
-    AND_of_two_bytes[idx + 256] = x
-    AND_of_two_bytes[idx + 257] = x + 1
-    idx = idx + 2
-  end
-  idx = idx + 256
+-- Implementation of secure hash functions SHA224/SHA256 in Lua 5.3, with bitwise operators.
+-- This implementation is based on the pseudo-code from Wikipedia (http://en.wikipedia.org/wiki/SHA-2)
+-- SHA-256 code in Lua 5.3; based on the pseudo-code from
+-- Wikipedia (http://en.wikipedia.org/wiki/SHA-2)
+-- http://lua-users.org/wiki/SecureHashAlgorithmBw
+-- MIT License (http://lua-users.org/lists/lua-l/2014-08/msg00628.html)
+
+local string, assert = string, assert
+
+-- Initialize table of round constants
+-- (first 32 bits of the fractional parts of the cube roots of the first
+-- 64 primes 2..311):
+local k = {
+   0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5,
+   0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+   0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3,
+   0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+   0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc,
+   0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+   0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
+   0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+   0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13,
+   0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+   0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3,
+   0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+   0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5,
+   0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+   0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208,
+   0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+}
+
+
+-- Lines marked with (1) can produce results with more than 32 bits.
+-- These values should be used only in other lines marked with (1), or
+-- in lines marked with (2), which trim their results to 32 bits.
+
+-- no need to trim at 32 bits (results will be trimmed later)
+local function rrotate (x, n)
+  return ((x >> n) | (x << (32 - n)))    -- (1)
 end
 
-local function and_or_xor(x, y, operation)
-  local x0 = x % 2^32
-  local y0 = y % 2^32
-  local rx = x0 % 256
-  local ry = y0 % 256
-  local res = AND_of_two_bytes[rx + ry * 256]
-  x = x0 - rx
-  y = (y0 - ry) / 256
-  rx = x % 65536
-  ry = y % 256
-  res = res + AND_of_two_bytes[rx + ry] * 256
-  x = (x - rx) / 256
-  y = (y - ry) / 256
-  rx = x % 65536 + y % 256
-  res = res + AND_of_two_bytes[rx] * 65536
-  res = res + AND_of_two_bytes[(x + y - rx) / 256] * 16777216
-  if operation then
-    res = x0 + y0 - operation * res
-  end
-  return res
-end
 
-local function AND(x, y)
-  return and_or_xor(x, y)
-end
-
-local function XOR(x, y, z, t, u)      -- 2..5 arguments
-  if z then
-    if t then
-      if u then
-        t = and_or_xor(t, u, 2)
-      end
-      z = and_or_xor(z, t, 2)
+-- transform a string of bytes in a string of hexadecimal digits
+local function str2hexa (s)
+  local h = string.gsub(s, ".", 
+    function(c)
+      return string.format("%02x", string.byte(c))
     end
-    y = and_or_xor(y, z, 2)
-  end
-  return and_or_xor(x, y, 2)
+  )
+  return h
 end
 
-HEX = pcall(string_format, "%x", 2^31) and function(x) -- returns string of 8 lowercase hexadecimal digits
-  return string_format("%08x", x % 4294967296)
+
+-- append the bit '1' to the message
+-- append k bits '0', where k is the minimum number >= 0 such that the
+-- resulting message length (in bits) is congruent to 448 (mod 512)
+-- append length of message (before pre-processing), in bits, as 64-bit
+-- big-endian integer
+local function preproc (msg, len)
+  local extra = -(len + 1 + 8) % 64
+  len = string.pack(">i8", 8 * len)    -- original len in bits, coded
+  msg = msg .. "\128" .. string.rep("\0", extra) .. len
+  assert(#msg % 64 == 0)
+  return msg
 end
 
--- Inner loop functions
-local sha256_feed_64
-local sha2_K_lo = {}
-local sha2_K_hi = {}
-local sha2_H_lo = {}
-local sha2_H_hi = {}
-local sha2_H_ext256 = {[224] = {}, [256] = sha2_H_hi}
-local sha2_H_ext512_lo = {[384] = {}, [512] = sha2_H_lo}
-local sha2_H_ext512_hi = {[384] = {}, [512] = sha2_H_hi}
-local common_W = {}
-local K_lo_modulo = 4294967296
-local hi_factor = 0
 
-XOR = XOR or XORA5
+local function initH224 (H)
+  -- (second 32 bits of the fractional parts of the square roots of the
+  -- 9th through 16th primes 23..53)
+  H[1] = 0xc1059ed8
+  H[2] = 0x367cd507
+  H[3] = 0x3070dd17
+  H[4] = 0xf70e5939
+  H[5] = 0xffc00b31
+  H[6] = 0x68581511
+  H[7] = 0x64f98fa7
+  H[8] = 0xbefa4fa4
+  return H
+end
 
-local function sha256_feed_64(H, str, offs, size)
-  local W, K = common_W, sha2_K_hi
-  local h1, h2, h3, h4, h5, h6, h7, h8 = H[1], H[2], H[3], H[4], H[5], H[6], H[7], H[8]
-  for pos = offs, offs + size - 1, 64 do
-    for j = 1, 16 do
-      pos = pos + 4
-      local a, b, c, d = byte(str, pos - 3, pos)
-      W[j] = ((a * 256 + b) * 256 + c) * 256 + d
-    end
+
+local function initH256 (H)
+  -- (first 32 bits of the fractional parts of the square roots of the
+  -- first 8 primes 2..19):
+  H[1] = 0x6a09e667
+  H[2] = 0xbb67ae85
+  H[3] = 0x3c6ef372
+  H[4] = 0xa54ff53a
+  H[5] = 0x510e527f
+  H[6] = 0x9b05688c
+  H[7] = 0x1f83d9ab
+  H[8] = 0x5be0cd19
+  return H
+end
+
+
+local function digestblock (msg, i, H)
+    -- break chunk into sixteen 32-bit big-endian words w[1..16]
+    local w = {string.unpack(">I4I4I4I4I4I4I4I4I4I4I4I4I4I4I4I4", msg, i)}
+    -- Extend the sixteen 32-bit words into sixty-four 32-bit words:
     for j = 17, 64 do
-      local a, b = W[j-15], W[j-2]
-      local a7, a18, b17, b19 = a / 2^7, a / 2^18, b / 2^17, b / 2^19
-      W[j] = (XOR(a7 % 1 * (2^32 - 1) + a7, a18 % 1 * (2^32 - 1) + a18, (a - a % 2^3) / 2^3) + W[j-16] + W[j-7]
-          + XOR(b17 % 1 * (2^32 - 1) + b17, b19 % 1 * (2^32 - 1) + b19, (b - b % 2^10) / 2^10)) % 2^32
+      local v = w[j - 15]
+      local s0 = rrotate(v, 7) ~ rrotate(v, 18) ~ (v >> 3)      -- (1)
+      v = w[j - 2]
+      local s1 = rrotate(v, 17) ~ rrotate(v, 19) ~ (v >> 10)    -- (1)
+      w[j] = (w[j - 16] + s0 + w[j - 7] + s1) & 0xffffffff      -- (2)
     end
-    local a, b, c, d, e, f, g, h = h1, h2, h3, h4, h5, h6, h7, h8
-    for j = 1, 64 do
-      e = e % 2^32
-      local e6, e11, e7 = e / 2^6, e / 2^11, e * 2^7
-      local e7_lo = e7 % 2^32
-      local z = AND(e, f) + AND(-1-e, g) + h + K[j] + W[j]
-          + XOR(e6 % 1 * (2^32 - 1) + e6, e11 % 1 * (2^32 - 1) + e11, e7_lo + (e7 - e7_lo) / 2^32)
+
+    -- Initialize hash value for this chunk:
+    local a, b, c, d, e, f, g, h =
+        H[1], H[2], H[3], H[4], H[5], H[6], H[7], H[8]
+
+    -- Main loop:
+    for i = 1, 64 do
+      local s0 = rrotate(a, 2) ~ rrotate(a, 13) ~ rrotate(a, 22)   -- (1)
+      local maj = (a & b) ~ (a & c) ~ (b & c)
+      local t2 = s0 + maj                                          -- (1)
+      local s1 = rrotate(e, 6) ~ rrotate(e, 11) ~ rrotate(e, 25)   -- (1)
+      local ch = (e & f) ~ (~e & g)
+      local t1 = h + s1 + ch + k[i] + w[i]                         -- (1)
       h = g
       g = f
       f = e
-      e = z + d
+      e = (d + t1) & 0xffffffff                                    -- (2)
       d = c
       c = b
-      b = a % 2^32
-      local b2, b13, b10 = b / 2^2, b / 2^13, b * 2^10
-      local b10_lo = b10 % 2^32
-      a = z + AND(d, c) + AND(b, XOR(d, c)) +
-          XOR(b2 % 1 * (2^32 - 1) + b2, b13 % 1 * (2^32 - 1) + b13, b10_lo + (b10 - b10_lo) / 2^32)
+      b = a
+      a = (t1 + t2) & 0xffffffff                                   -- (2)
     end
-    h1, h2, h3, h4 = (a + h1) % 2^32, (b + h2) % 2^32, (c + h3) % 2^32, (d + h4) % 2^32
-    h5, h6, h7, h8 = (e + h5) % 2^32, (f + h6) % 2^32, (g + h7) % 2^32, (h + h8) % 2^32
+    -- Add (mod 2^32) this chunk's hash to result so far:
+    H[1] = (H[1] + a) & 0xffffffff
+    H[2] = (H[2] + b) & 0xffffffff
+    H[3] = (H[3] + c) & 0xffffffff
+    H[4] = (H[4] + d) & 0xffffffff
+    H[5] = (H[5] + e) & 0xffffffff
+    H[6] = (H[6] + f) & 0xffffffff
+    H[7] = (H[7] + g) & 0xffffffff
+    H[8] = (H[8] + h) & 0xffffffff
+end
+
+-- Produce the final hash value (big-endian):
+local function finalresult256 (H)
+  return
+    str2hexa(string.pack("> I4 I4 I4 I4 I4 I4 I4 I4",
+        H[1], H[2], H[3], H[4], H[5], H[6], H[7], H[8]))
+end
+
+local HH = {}
+
+local function hash256 (msg)
+  msg = preproc(msg, #msg)
+  local H = initH256(HH)
+  for i = 1, #msg, 64 do -- Process the message in successive 512-bit (64 bytes) chunks:
+    digestblock(msg, i, H)
   end
-  H[1], H[2], H[3], H[4], H[5], H[6], H[7], H[8] = h1, h2, h3, h4, h5, h6, h7, h8
+  return finalresult256(H)
 end
 
-do
-   local function mul(src1, src2, factor, result_length)
-    local result, carry, value, weight = {}, 0.0, 0.0, 1.0
-    for j = 1, result_length do
-     for k = math_max(1, j + 1 - #src2), math_min(j, #src1) do
-      carry = carry + factor * src1[k] * src2[j + 1 - k]
-     end
-     local digit = carry % 2^24
-     result[j] = floor(digit)
-     carry = (carry - digit) / 2^24
-     value = value + digit * weight
-     weight = weight * 2^24
-    end
-    return result, value
-   end
-
-   local idx, step, p, one, sqrt_hi, sqrt_lo = 0, {4, 1, 2, -2, 2}, 4, {1}, sha2_H_hi, sha2_H_lo
-   repeat
-    p = p + step[p % 6]
-    local d = 1
-    repeat
-     d = d + step[d % 6]
-     if d*d > p then -- next prime number is found
-      local root = p^(1/3)
-      local R = root * 2^40
-      R = mul({R - R % 1}, one, 1.0, 2)
-      local _, delta = mul(R, mul(R, R, 1.0, 4), -1.0, 4)
-      local hi = R[2] % 65536 * 65536 + floor(R[1] / 256)
-      local lo = R[1] % 256 * 16777216 + floor(delta * (2^-56 / 3) * root / p)
-      if idx < 16 then
-         root = p^(1/2)
-         R = root * 2^40
-         R = mul({R - R % 1}, one, 1.0, 2)
-         _, delta = mul(R, R, -1.0, 2)
-         local hi = R[2] % 65536 * 65536 + floor(R[1] / 256)
-         local lo = R[1] % 256 * 16777216 + floor(delta * 2^-17 / root)
-         local idx = idx % 8 + 1
-         sha2_H_ext256[224][idx] = lo
-         sqrt_hi[idx], sqrt_lo[idx] = hi, lo + hi * hi_factor
-         if idx > 7 then
-          sqrt_hi, sqrt_lo = sha2_H_ext512_hi[384], sha2_H_ext512_lo[384]
-         end
-      end
-      idx = idx + 1
-      sha2_K_hi[idx], sha2_K_lo[idx] = hi, lo % K_lo_modulo + hi * hi_factor
-      break
-     end
-    until p % d == 0
-   until idx > 79
-end
+return hash256
 
 
---------------------------------------------------------------------------------
--- MAIN FUNCTIONS
---------------------------------------------------------------------------------
-
-local function sha256ext(width, message)
-   -- Create an instance (private objects for current calculation)
-   local H, length, tail = {unpack(sha2_H_ext256[width])}, 0.0, ""
-   local function partial(message_part)
-    if message_part then
-     if tail then
-      length = length + #message_part
-      local offs = 0
-      if tail ~= "" and #tail + #message_part >= 64 then
-         offs = 64 - #tail
-         sha256_feed_64(H, tail..sub(message_part, 1, offs), 0, 64)
-         tail = ""
-      end
-      local size = #message_part - offs
-      local size_tail = size % 64
-      sha256_feed_64(H, message_part, offs, size - size_tail)
-      tail = tail..sub(message_part, #message_part + 1 - size_tail)
-      return partial
-     else
-      error("Adding more chunks is not allowed after receiving the result", 2)
-     end
-    else
-     if tail then
-      local final_blocks = {tail, "\128", string_rep("\0", (-9 - length) % 64 + 1)}
-      tail = nil
-      -- Assuming user data length is shorter than (2^53)-9 bytes
-      -- Anyway, it looks very unrealistic that someone would spend more than a year of calculations to process 2^53 bytes of data by using this Lua script :-)
-      -- 2^53 bytes = 2^56 bits, so "bit-counter" fits in 7 bytes
-      length = length * (8 / 256^7)  -- convert "byte-counter" to "bit-counter" and move decimal point to the left
-      for j = 4, 10 do
-         length = length % 1 * 256
-         final_blocks[j] = char(floor(length))
-      end
-      final_blocks = table_concat(final_blocks)
-      sha256_feed_64(H, final_blocks, 0, #final_blocks)
-      local max_reg = width / 32
-      for j = 1, max_reg do
-         H[j] = HEX(H[j])
-      end
-      H = table_concat(H, "", 1, max_reg)
-     end
-     return H
-    end
-   end
-
-   if message then
-    -- Actually perform calculations and return the SHA256 digest of a message
-    return partial(message)()
-   else
-    -- Return function for chunk-by-chunk loading
-    -- User should feed every chunk of input data as single argument to this function and finally get SHA256 digest by invoking this function without an argument
-    return partial
-   end
-end
-
-local function sha256(message) return sha256ext(256, message) end
-return sha256
-
---==[[================================================================================]]==--
---==[[ https://github.com/Egor-Skriptunoff/pure_lua_SHA                               ]]==--
---==[[================================================================================]]==--
---==[[ MIT License                                                                    ]]==--
---==[[                                                                                ]]==--
---==[[ Copyright (c) 2018-2022  Egor Skriptunoff                                      ]]==--
---==[[                                                                                ]]==--
---==[[ Permission is hereby granted, free of charge, to any person obtaining a copy   ]]==--
---==[[ of this software and associated documentation files (the "Software"), to deal  ]]==--
---==[[ in the Software without restriction, including without limitation the rights   ]]==--
---==[[ to use, copy, modify, merge, publish, distribute, sublicense, and/or sell      ]]==--
---==[[ copies of the Software, and to permit persons to whom the Software is          ]]==--
---==[[ furnished to do so, subject to the following conditions:                       ]]==--
---==[[                                                                                ]]==--
---==[[ The above copyright notice and this permission notice shall be included in all ]]==--
---==[[ copies or substantial portions of the Software.                                ]]==--
---==[[                                                                                ]]==--
---==[[ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR     ]]==--
---==[[ IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,       ]]==--
---==[[ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE    ]]==--
---==[[ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER         ]]==--
---==[[ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,  ]]==--
---==[[ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE  ]]==--
---==[[ SOFTWARE.                                                                      ]]==--
---==[[================================================================================]]==--
+--[[================================================================================]]--
+--[[ SecureHashingAlgorithm-BitWise by Roberto Ierusalimschy used under MIT License ]]--
+--[[                                                                                ]]--
+--[[ http://lua-users.org/wiki/SecureHashAlgorithmBw                                ]]--
+--[[                                                                                ]]--
+--[[ Copyright © 1994–2024 Lua.org, PUC-Rio.                                        ]]--
+--[[                                                                                ]]--
+--[[ Permission is hereby granted, free of charge, to any person obtaining a copy   ]]--
+--[[ of this software and associated documentation files (the "Software"), to deal  ]]--
+--[[ in the Software without restriction, including without limitation the rights   ]]--
+--[[ to use, copy, modify, merge, publish, distribute, sublicense, and/or sell      ]]--
+--[[ copies of the Software, and to permit persons to whom the Software is          ]]--
+--[[ furnished to do so, subject to the following conditions:                       ]]--
+--[[                                                                                ]]--
+--[[ The above copyright notice and this permission notice shall be included in     ]]--
+--[[ all copies or substantial portions of the Software.                            ]]--
+--[[                                                                                ]]--
+--[[ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR     ]]--
+--[[ IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,       ]]--
+--[[ FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE    ]]--
+--[[ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER         ]]--
+--[[ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,  ]]--
+--[[ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE  ]]--
+--[[ SOFTWARE.                                                                      ]]--
+--[[                                                                                ]]--
+--[[ https://www.lua.org/license.html                                               ]]--
+--[[================================================================================]]--
