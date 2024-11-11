@@ -1,6 +1,6 @@
 ```lua
 --==[[=======================]]==--
---==[[ hasher          0.0.1 ]]==--
+--==[[ hasher          0.0.2 ]]==--
 --==[[ Copyright © 2024 monk ]]==--
 --==[[ MIT License           ]]==--
 --==[[=======================]]==--
@@ -9,98 +9,101 @@ Concurrent processing of hex seeds hashed with sha256 to test hash collisions
 
 ___
 
-Overview:
-
-The spawned process completes a batch before sending the serialized data to the parent process.
-A batch consists of a specific number of cycles, while a cycle covers all possible hexadecimal
-values for the frame size, which increment in non-parallel sequence.
-
-A frame size of 2 digits will create (16^frame) hex seeds, to complete 1 cycle of a batch.
-
-___
-
 Process Details:
 
-The batch process starts by spawning child processes. The spawn creates a hex string with frames of 
-digits with randomized starting values. Each frame is incremented in sequence by 1, for a complete
-cycle through the range of values. The table of hexadecimal seeds are then hashed with sha256.
+The batch process starts with the parent process creating worker processes, and one writer process.
 
-The seeds along with their hash are sorted by the first 2 characters of the hash. The bulk of each
-is concatenated into a single string then serialized. The detached process creates a FIFO pipe to
-send the serialized data for the init to process.
+The parent process continuously polls for completed work in a non-blocking loop.
 
-The parent skips processes which are not ready to send data. When received, the data is converted 
-into unbroken binary strings, sorted by index and appended to file. 
+Each worker creates a 64 character hexadecimal seed, composed of 32 random bytes.
 
-If a target hash is provided as a command argument, the script will search through the data folder 
-for a match. It takes the first two characters of the target hash, and reads from the corresponding 
-file in chunks of 8192 bytes. This will print matches based on character length. In other words, 
-how many matches for 'abc', 'abcd', 'abcde', etc. 
+Each byte frame (2 chars) increments from their starting value in sequence by 1, and shifted by
+one position, to complete the range of possible hexadecimal values of one byte (256).
 
-Additionally search.lua can be used from command line as a standalone tool.
+This creates a table of 16384 uniqe hexadecimal seeds, which are then hashed with sha256.
+
+The worker then passes the data to the parent process through a FIFO pipe file.
+
+The parent process accumulates the batches until each worker has produced one batch. The accumulated
+bulk data is transfered to the writer for additional processing.
+
+The writer process receieves the hash-seed pairs, and sorts them by the first three characters
+of the hash. Each string is then converted to binary as 4-byte unsigned integers before writing to file.
+
+A binary file contains a single unbroken sequence of hash and seed pairs.
+
+One complete batch will yield 1MB on disk, organized into files named by the hash prefixes.
+
+By default, file prefix is 3 characters, and will eventually create 4096 files.
+
+The file named search.lua can be used from command line to search for a hash, and returns with
+the total matches based on character length.
 
 ___
 
 Contents:
   - init.lua
   - spawn.lua
-  - serialize.lua
+  - save.lua
   - search.lua
-  - sha256.lua (Used under License, Copyright (c) 2018-2022  Egor Skriptunoff)
+  - sha256.lua (Used under License, Copyright (c) 2014 Roberto Ierusalimschy)
+  - clip.lua
+  - stats.lua
   - data/
 
 ___
 
 Requirements:
-  - Lua >= 5.3 for string.pack functionality.
+  - Lua >= 5.3 to use string.pack and bitwise
   - Linux packages: `mkfifo`, `date`, `sleep`
 
 Command Line Arguments and Defaults:
 
-  - `spawn=1` number of concurrent processes serializing hashed hexadecimal seeds for the parent process
-  
-  - `batch=1` is the number of times to repeat the number of cycles before handoff to the parent process
+  - `spawn=1` number of concurrent processes hashing hexadecimal seeds
 
-  - `cycle=1` is the number of times to sequence through the range of hex values determined by the frame
-
-  - `frame=2` length of hex digits which increment in value non-parallel to other frames within the seed
-  
-  - `target=` optional target hash to search for after completing all batches
+  - `batch=1` number of times to repeat the entire process. use `batch=0` for endless.
 
 ___
 
 Examples with output:
 
-Run with default settings
+Run with default settings (1 batch, 1 worker)
 
     $ lua init.lua 
-      256 hashes (16.00KB) in 0.298s [858.889hps/53.68KBbps]
+    > Processes: 1 	Batches: 1
+    > 16384h 	1.00MB 	1.340s 	12226h/s 	764.19KB/s 
 
-Run three (3) sub-processes for 64 batches of 16 cycles:
+Run three (3) workers for 10 batches:
 
-    $ lua init.lua spawn=3 cycle=16 batch=64
-      786432 hashes (48.00MB) in 464.340s [1693.655hps/105.85KBbps]
+    $ lua init.lua spawn=3 batch=10
+    > Processes: 3 	Batches: 10
+    > 114688h 	7.00MB  	5.012s  	22882h/s 	1.40MB/s
+    > 212992h 	13.00MB 	9.985s  	21331h/s 	1.30MB/s
+    > 344064h 	21.00MB 	15.993s 	21513h/s 	1.31MB/s
+    > 491520h 	30.00MB 	20.711s 	23731h/s 	1.45MB/s
+    > 491520h 	30.00MB 	20.713s 	23729h/s 	1.45MB/s
 
-With a frame size of 4 hex digits:
+Search for a previously generated hash:
 
-    $ lua init.lua frame=4
-      65536 hashes (4.00MB) in 75.490s [868.138hps/54.26KBbps]
+  Positive match gives the seed:
 
-With a target hash to search after completion:
+    $ lua search.lua 838abfeef24a3ba3a8060316c4f7ccfb9bd02de1c0b0b9e96eae6d0c1fe55215
+    > Hash: 838abfeef24a3ba3a8060316c4f7ccfb9bd02de1c0b0b9e96eae6d0c1fe55215
+    > Seed: 632b66842869b92f43780337ab07c17184e927aeb51ab896018ce0a13c9f1676
 
-    $ lua init.lua spawn=2 cycle=2 batch=1 target=9bf357782d60bfcd5c37697b78759d62a2054388b6a51a5c41446dc2d04ce76f
-      1024 hashes (64.00KB) in 0.666s [1538.636hps/96.16KBbps]
-      Searching for 9bf357782d60bfcd5c37697b78759d62a2054388b6a51a5c41446dc2d04ce76f in archive
-      Pattern	Matches
-      9bf3	5
-      9bf	126
+  Closest matches given if no exact matches are found:
 
-Search for a previously generated hash as a standalone operation:
+    $ lua search.lua 8008ace23ae0a30ba404e4ec83bb6f2e32660fe10dfefd163c5d4722e587ecef
+    > Matches	Pattern
+    > 6     	8008
 
-    $ lua search.lua 9bf357782d60bfcd5c37697b78759d62a2054388b6a51a5c41446dc2d04ce76f
-      Pattern	Matches
-      9bf	126
-      9bf3	5
+
+____
+
+
+one hexadecimal character (f) represents 4 bits, one half byte.
+one hexadecimal digit (ff) consists of a single byte, or 8 bits.
+so 64 hex characters × 4 bits = 256 bits, which is 32 bytes.
 
 ```
 ___

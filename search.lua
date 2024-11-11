@@ -27,29 +27,40 @@ local function bin2hex(bin_str)  -- binary to hexadecimal
   return hash
 end
 
+local function out(...)
+  return io.stdout:write(table.concat({...}), "\n"):flush()
+end
+
 local function dump_data(t)
-  io.stdout:write("Pattern\tMatches\n")
-  for index, matches in pairs(t) do
-    if matches > 0 then
-      io.stdout:write(index, "\t", matches, "\n")
+  out("Matches\tPattern")
+  for i = 1, #t do
+    for index, matches in pairs(t[i]) do
+      if #matches > 1 then
+        out(matches[1], "\t", index)
+        -- uncomment this one to print the matches (lots of output)
+        -- out(matches[1], "\t", index, "\n", table.concat(matches, "\n"))
+      end
     end
   end
 end
 
 local function search_archive(target_hash)
+  local hex_length = 3
   local data_dir = "./data/"  -- this needs to be created if it doesn't exist
-  local binary_data_file = string.sub(target_hash, 1, 2)
+  local binary_data_file = string.sub(target_hash, 1, hex_length)
   local path = data_dir..binary_data_file
   local file = io.open(path, "rb")
 
   if file and target_hash then
-    local chunk_size = 8192  -- read 256 bytes from each file
+    local chunk_size = 16 ^ hex_length  -- read Nkb bytes from each file
     local target_bin = hex2bin(target_hash)  -- convert target hash to binary
 
-    local separate_hash = {}
+    local separate_hash = {} -- create table of letters from target hash
     for c = 1, #target_hash do
-      local index = string.sub(target_hash, 1, c + 2)
-      separate_hash[index] = 0
+      local index = string.sub(target_hash, 1, c + hex_length)
+      separate_hash[c] = {
+        [index] = {[1]=0}
+      }
     end
 
     while true do
@@ -61,25 +72,32 @@ local function search_archive(target_hash)
         local bin_seed = binary_chunk:sub(i+32, i+63)  -- the last 32 are the seed
         if #bin_seed < 32 or #bin_hash < 32 then break end
 
-        local archive_seed = bin2hex(bin_seed)
         local archive_hash = bin2hex(bin_hash)
 
+        if archive_hash == target_hash then
+          local archive_seed = bin2hex(bin_seed)
+          out("Hash: "..archive_hash)
+          out("Seed: "..archive_seed)
+          return
+        end
+
         for c = 1, #archive_hash do
-          local index = string.sub(archive_hash, 1, c + 2)
-    
-          if separate_hash[index] then
-            separate_hash[index] = separate_hash[index] + 1
+          local index = string.sub(archive_hash, 1, c + hex_length)
+
+          if separate_hash[c][index] then
+            local count = separate_hash[c][index][1]
+            separate_hash[c][index][1] = count + 1
+            table.insert(separate_hash[c][index], archive_hash.." "..bin2hex(bin_seed))
           end
         end
       end
     end
-    dump_data(separate_hash)
-
     file:close()
+    dump_data(separate_hash)
   elseif not file then
-    io.stdout:write("Missing archive: ", path, "\n"):flush()
+    out("Missing archive: ", path)
   elseif not target_hash then
-    io.stdout:write("No target hash received."):flush()
+    out("No target hash received.")
   end
 end
 

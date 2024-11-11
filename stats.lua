@@ -4,14 +4,15 @@
 --==[[ MIT License           ]]==--
 --==[[=======================]]==--
 
+-- get the timestamp with millisecond
 local function ct()
-    local handle = io.popen("date +%s.%N")
-    local result = handle:read("*a")
-    handle:close()
-    return tonumber(result)
+  local handle = io.popen("date +%s.%N")
+  local result = handle:read("*a")
+  handle:close()
+  return tonumber(result)
 end
 
-
+-- bytes to readable format
 local function convert_bytes(bytes)
   local units = {"B", "KB", "MB", "GB", "TB"}
   local i = 1
@@ -22,29 +23,31 @@ local function convert_bytes(bytes)
   return string.format("%.2f%s", bytes, units[i])
 end
 
-
 local total_bytes = 0
 local start_clock = ct()
 local last_print = os.time()
 
+-- 2 hexadecimal characters is 1 byte.
 local function add_bytes(bytes)
   total_bytes = total_bytes + bytes
 end
 
+-- calculate hash/second and byte/second
 local function calculate_hps(force_print)
-  if os.time() - last_print >= 10 or force_print then
+  if os.time() - last_print >= 5 or force_print then
     local clock_time = ct()
-    local total_hash = math.floor(total_bytes/64)
-    local current_time = clock_time - start_clock
-    local hps = string.format("%.03f", (total_hash / current_time))
-    local bps = convert_bytes(total_bytes / current_time)
-
-    last_print = os.time()
+    local character_bytes = total_bytes
+    local actual_bytes = character_bytes * 0.5 -- half because we're counting characters
+    local total_hash = actual_bytes / 64
+    local runtime = clock_time - start_clock
+    local hps = total_hash // runtime
+    local bps = convert_bytes(actual_bytes / runtime)
     io.stdout:write(
-        string.format(
-          "%d hashes (%s) in %.03fs [%shps/%sbps]\n",
-          total_hash, convert_bytes(total_bytes), current_time, hps, bps
-        )):flush()
+      string.format(
+        "%dh \t%s \t%.03fs \t%dh/s \t%s/s \n",
+          total_hash, convert_bytes(actual_bytes), runtime, hps, bps
+      )):flush()
+    last_print = os.time()
   end
 end
 
