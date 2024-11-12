@@ -1,10 +1,8 @@
 --==[[=======================]]==--
---==[[ hasher      spawn.lua ]]==--
+--==[[ hasher     worker.lua ]]==--
 --==[[ Copyright © 2024 monk ]]==--
 --==[[ MIT License           ]]==--
 --==[[=======================]]==--
-
-local clip = dofile("clip.lua")
 
 -- pre-construct the table of hex bytes
 local hex_table = {"00"}
@@ -78,7 +76,8 @@ local function grow_seed(seed)
 end
 
 local function main()
-  local batch = tonumber(clip.batch) or 1
+  local batch = tonumber(arg[1]) or 1
+  local spawn_id = arg[2]
 
   local seed_table = {}
   local hash_table = {}
@@ -86,7 +85,7 @@ local function main()
     grow_seed(seed_table)
     roll_hash(seed_table, hash_table)
 
-    local pipe = pipe_closure(clip.spawn)
+    local pipe = pipe_closure(spawn_id)
     pipe("write", table.concat(hash_table))
     pipe("close")
 
@@ -101,8 +100,8 @@ local function main()
   end
 
    -- tell the parent when work is done
-  local filename = "/tmp/fifo_" .. clip.spawn
-  local file = io.open("/tmp/fifo_" .. clip.spawn, "w+")
+  local filename = "/tmp/fifo_" .. spawn_id
+  local file = io.open("/tmp/fifo_" .. spawn_id, "w+")
   file:write("kill\n"):close()
 end
 
