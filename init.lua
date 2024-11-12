@@ -22,20 +22,18 @@ local function pipe_closure(pipe_file)
 
     table.insert(chunk_data, data)
 
+    add_bytes(half_bytes) -- not binary bytes
     -- condition of 2MB before writing (1 batch per spawn)
     if chunk_byte >= 2097152 * num_spawns or action == "write" then
       local file = io.open(pipe_file, "a")
 
-      if file then
-        local chunk_concat = table.concat(chunk_data)
-        file:write(chunk_concat, "\n"):close()
+      if file and chunk_byte >= 128 then
+        file:write(table.concat(chunk_data), "\n"):close()
         chunk_data = {}
         chunk_byte = 0
       end
       calculate_hps()
     end
-
-    add_bytes(half_bytes) -- not binary bytes
   end
 end
 
@@ -79,6 +77,7 @@ local function process_work(spawn_data)
   spawn_data.writer.pipe("write", "") -- force write any remaining chunks
 end
 
+
 local function activate_spawns(spawn_data)
   for id, userdata in pairs(spawn_data.workers) do
       userdata.status = io.popen(userdata.pop_string)
@@ -86,17 +85,20 @@ local function activate_spawns(spawn_data)
   return process_work(spawn_data)
 end
 
+
 local function spawner()
   local spawn_data = {workers = {}}
   -- create our spawn processes
+  local tmp_fifo = "/tmp/fifo_"
+
   for n = 1, num_spawns do
     local spawn = {id}
     local spawn_id = tostring(spawn):sub(12)
-    local filename = "/tmp/fifo_" .. spawn_id
+
     spawn = {
       status = false,
-      fifo_pipe_id = filename,
-      pop_string = string.format("lua spawn.lua batch=%d spawn=%s", batch, spawn_id)
+      fifo_pipe_id = tmp_fifo .. spawn_id,
+      pop_string = string.format("lua worker.lua %d %s", batch, spawn_id)
     }
     spawn_data.workers[spawn_id] = spawn
   end
@@ -104,12 +106,12 @@ local function spawner()
   -- create our writer asap for it to create and listen to the pipe
   local writer = {id}
   local writer_id = tostring(writer):sub(12)
-  local pipe_file = "/tmp/fifo_" .. writer_id
+
   spawn_data.writer = {
-    status = io.popen(string.format("lua save.lua writer=%s", writer_id)),
-    pipe = pipe_closure(pipe_file),
-    fifo = pipe_file
+    status = io.popen(string.format("lua writer.lua %s", writer_id)),
+    pipe = pipe_closure(tmp_fifo .. writer_id)
   }
+
   clip.writer_id = writer_id
   return activate_spawns(spawn_data)
 end

@@ -12,15 +12,24 @@ local function ct()
   return tonumber(result)
 end
 
--- bytes to readable format
-local function convert_bytes(bytes)
-  local units = {"B", "KB", "MB", "GB", "TB"}
+-- number to readable format
+local function convert_value(value, factor)
+  local units = {"", "K", "M", "G", "T"}
   local i = 1
-  while bytes >= 1024 and i < #units do
-    bytes = bytes / 1024
+  while value >= factor and i < #units do
+    value = value / factor
     i = i + 1
   end
-  return string.format("%.2f%s", bytes, units[i])
+  return value, units[i]
+end
+
+local mfm = math.fmod
+local function display_runtime(time)
+  local d = time//86400
+  local h = mfm(time,86400)//3600
+  local m = mfm(time,3600)//60
+  local s = mfm(time,60)//1
+	return string.format("%d:%02d:%02d:%02d",d,h,m,s)
 end
 
 local total_bytes = 0
@@ -34,18 +43,22 @@ end
 
 -- calculate hash/second and byte/second
 local function calculate_hps(force_print)
-  if os.time() - last_print >= 5 or force_print then
-    local clock_time = ct()
-    local character_bytes = total_bytes
-    local actual_bytes = character_bytes * 0.5 -- half because we're counting characters
-    local total_hash = actual_bytes / 64
-    local runtime = clock_time - start_clock
-    local hps = total_hash // runtime
-    local bps = convert_bytes(actual_bytes / runtime)
+  if os.time() - last_print >= 10 or force_print then
+    local actual_bytes = total_bytes * 0.5 -- half because we're counting characters
+    local total_hash, hash_unit = convert_value(actual_bytes / 64, 1000)
+    local runtime = ct() - start_clock
+    local hash_per_sec = total_hash / runtime
+    local bytes_per_sec, byte_unit = convert_value(actual_bytes / runtime, 1024)
+    local bytes_written, mem_unit = convert_value(actual_bytes, 1024)
+
     io.stdout:write(
       string.format(
-        "%dh \t%s \t%.03fs \t%dh/s \t%s/s \n",
-          total_hash, convert_bytes(actual_bytes), runtime, hps, bps
+        " %s | %.02f%sh (%.01f%sB) | %.01fKh/s %.02f%sB/s \n",
+          display_runtime(runtime),
+          total_hash,    hash_unit,
+          bytes_written, mem_unit,
+          hash_per_sec,
+          bytes_per_sec, byte_unit
       )):flush()
     last_print = os.time()
   end
