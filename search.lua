@@ -8,21 +8,21 @@
 
 local function hex2bin(hash_str)  -- hexadecimal to binary
   local bin = ""
-  for c = 1, #hash_str, 8 do
-    local hex_str = string.sub(hash_str, c, c+7)
+  for c = 1, #hash_str, 16 do
+    local hex_str = string.sub(hash_str, c, c+15)
     local hex_int = tonumber(hex_str, 16)
     if not hex_int then error("Invalid hexadecimal string: " .. hex_str) end
-    bin = bin .. string.pack(">I4", hex_int)
+    bin = bin .. string.pack(">I16", hex_int)
   end
   return bin
 end
 
 local function bin2hex(bin_str)  -- binary to hexadecimal
   local hash = ""
-  for b = 1, #bin_str, 4 do
-    local four_byte = string.sub(bin_str, b, b+3)
-    local num = string.unpack(">I4", four_byte)
-    hash = hash .. string.format("%08x", num)
+  for b = 1, #bin_str, 16 do
+    local four_byte = string.sub(bin_str, b, b+15)
+    local num = string.unpack(">I16", four_byte)
+    hash = hash .. string.format("%016x", num)
   end
   return hash
 end
@@ -52,7 +52,7 @@ local function search_archive(target_hash)
   local file = io.open(path, "rb")
 
   if file and target_hash then
-    local chunk_size = 16 ^ hex_length  -- read Nkb bytes from each file
+    local chunk_size = 512  -- read Nkb bytes from each file
     local target_bin = hex2bin(target_hash)  -- convert target hash to binary
 
     local separate_hash = {} -- create table of letters from target hash
@@ -111,7 +111,7 @@ end
 --==[[================================================================================]]==--
 --==[[ MIT License                                                                    ]]==--
 --==[[                                                                                ]]==--
---==[[ Copyright (c) 2024  monk                                                       ]]==--
+--==[[ Copyright © 2024  monk                                                         ]]==--
 --==[[                                                                                ]]==--
 --==[[ Permission is hereby granted, free of charge, to any person obtaining a copy   ]]==--
 --==[[ of this software and associated documentation files (the "Software"), to deal  ]]==--
@@ -121,7 +121,7 @@ end
 --==[[ furnished to do so, subject to the following conditions:                       ]]==--
 --==[[                                                                                ]]==--
 --==[[ The above copyright notice and this permission notice shall be included in all ]]==--
---==[[ copies or indextantial portions of the Software.                               ]]==--
+--==[[ copies or substantial portions of the Software.                                ]]==--
 --==[[                                                                                ]]==--
 --==[[ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR     ]]==--
 --==[[ IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,       ]]==--

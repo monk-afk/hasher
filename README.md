@@ -1,6 +1,6 @@
 ```lua
 --==[[=======================]]==--
---==[[ hasher          0.0.3 ]]==--
+--==[[ hasher          0.1.1 ]]==--
 --==[[ Copyright © 2024 monk ]]==--
 --==[[ MIT License           ]]==--
 --==[[=======================]]==--
@@ -11,72 +11,45 @@ Hash Collision Testing
 
 ### Process Details:
 
-- The batch process starts with the parent process creating worker processes, and one writer process.
+- generate a 64 character hexadecimal seed
 
-- The parent process continuously polls for completed work in a non-blocking loop.
+- increment each byte by one while 
 
-- Each worker creates a 64 character hexadecimal seed, composed of 32 random bytes.
+- slide each frame by one position in the string
 
-- Each byte frame (2 chars) increments from their starting value in sequence by 1, and shifted by one position, to complete the range of possible hexadecimal values of one byte (256).
+- repeat until the sequence would repeat
 
-- This creates a table of 16384 uniqe hexadecimal seeds, which are then hashed with sha256.
+- this creates 16352 strings from one seed
 
-- The worker then passes the data to the parent process through a FIFO pipe file.
+- hash the seeds using sha256
 
-- The parent process accumulates the batches until each worker has produced one batch. The accumulated bulk data is transfered to the writer for additional processing.
+- encode the hash-seed pairs into binary
 
-- The writer process receieves the hash-seed pairs, and sorts them by the first three characters of the hash. Each string is then converted to binary as 4-byte unsigned integers before writing to file.
+- file by the first 3-characters of the hash
 
-- A binary file contains a single unbroken sequence of hash and seed pairs.
+- binary data is cached 2MB before writing to disk
 
-- One complete batch will yield 1MB on disk per worker process, organized into files named by the hash prefixes.
-
-- By default, file prefix is 3 characters, and will eventually create 4096 files.
-
-- The file named search.lua can be used from command line to search for a hash, and returns with the total matches based on character length.
+- 
 
 ___
 
 ### Contents:
-```
-  init.lua        - initializer and parent process
-  ││ ├─clip.lua   - tabularizes command line arguments
-  ││ └─stats.lua  - runtime statistics
-  │└─spawn.lua    - generates seed and hash
-  │  └─sha256.lua - SHA-256, MIT, Copyright © 2014 Roberto Ierusalimschy
-  └─save.lua      - organize and write to disk
-    └─data/       - binary files storage
-  - search.lua    - search for generated hash/seed pair
-```
-___
 
-### Requirements:
-  - Lua >= 5.3 to use string.pack and bitwise
-  - Linux packages: `mkfifo`, `date`, `sleep`
-
-### Command Line Arguments and Defaults:
-
-  - `spawn=1` number of concurrent processes hashing hexadecimal seeds
-
-  - `batch=1` number of times to repeat the entire process. use `batch=0` for endless.
+  - init.lua    - main function process
+  - stats.lua   - runtime statistics
+  - signal.lua  - to gracefully exit
+  - sha256.lua  - SHA-256, MIT, Copyright © 2014 Roberto Ierusalimschy
+  - data/       - binary files storage
+  - search.lua  - search for generated hash/seed pair
 
 ___
 
-### Examples with output:
+**Requires** Lua >= 5.3 to use string.pack and bitwise
 
-**Run with default settings (1 batch, 1 worker)**
+**Run**
 
     $ lua init.lua
-    > Processes: 1 	Batches: 1
-    >  0:00:00:01 | 16.38Kh (1.0MB) | 12.2Kh/s 765.13KB/s
-
-**Run three (3) workers for 10 batches:**
-
-    $ lua init.lua spawn=3 batch=10
-    > Processes: 3 	Batches: 10
-    >  0:00:00:10 | 212.99Kh (13.0MB) | 20.4Kh/s 1.24MB/s
-    >  0:00:00:19 | 425.98Kh (26.0MB) | 21.6Kh/s 1.32MB/s
-    >  0:00:00:22 | 491.52Kh (30.0MB) | 22.1Kh/s 1.35MB/s
+    >  0:00:39:04 | 23724032h 10117h/s | 724.0MB 316.17KB/s
 
 **Search for a previously generated hash:**
 
@@ -88,11 +61,32 @@ ___
 
   *Closest matches given if no exact matches are found:*
 
-    $ lua search.lua 8008ace23ae0a30ba404e4ec83bb6f2e32660fe10dfefd163c5d4722e587ecef
+    $ lua search.lua 2b0e26916d47f47de882532706085dfac9e151fb06ba15715a3a7b44272e6fc9
     > Matches	Pattern
-    > 6     	8008
+    > 270     2b0e
+    > 17      2b0e2
+    > 4       2b0e26
 
 ____
+
+### Changelog
+
+  - 0.1.1
+    - scrapping the child processes to allow gradual improvements
+    - added sliding window technique to seed generation
+    - add a killswitch file to signal terminate instead of ctrl+c interrupt
+
+  - 0.0.3
+    - fix issue with having too many open files at once
+
+  - 0.0.2
+    - bugfix for parent process to not stop on the first pipe it opens
+    - add a separate sub-process to handle file writes
+    - changed sha256 library to use bitwise
+
+  - 0.0.1
+    - initial commit included child processes and a parent writer process
+
 
 ```lua
 ==============================================================================
