@@ -4,131 +4,158 @@
 --==[[ MIT License           ]]==--
 --==[[=======================]]==--
 
-local clip = dofile("clip.lua")
-local num_spawns = math.max(tonumber(clip.spawn) or 1, 1) -- sub-processes
-local batch = math.max(tonumber(clip.batch) or 1, 0) -- batch of cycles
-
+local string, table = string, table
 local add_bytes, calculate_hps = dofile("stats.lua")
 
--- pipe to writer closure
-local function pipe_closure(pipe_file)
-  local chunk_data = {}
-  local chunk_byte = 0
+local bin_cache = {}
+-- manage or create open files
+local function write_to_file(bin_cache)
+  for ref, data in pairs(bin_cache) do
+    local file = io.open("data/" .. ref, "ab")
+    file:write(table.concat(data))
+    file:close()
+  end
+  -- clear the cache after writing to files
+  for k in pairs(bin_cache) do
+    bin_cache[k] = nil
+  end
+end
 
-  return function(action, data)
-    local half_bytes = #data -- 2 hex characters make 1 byte
 
-    chunk_byte = chunk_byte + half_bytes
+-- closure to track bytes in cache
+local function byte_count()
+  local bytes = 0
+  return function(o)
+    bytes = o and bytes + o or 0
+    add_bytes(o)
+    return bytes
+  end
+end
+local count_cached_bytes = byte_count()
 
-    table.insert(chunk_data, data)
 
-    add_bytes(half_bytes) -- not binary bytes
-    -- condition of 2MB before writing (1 batch per spawn)
-    if chunk_byte >= 2097152 * num_spawns or action == "write" then
-      local file = io.open(pipe_file, "a")
+-- appending binary data to the cache
+local function append_binary_data(file_ref, bin_str)
+  bin_cache[file_ref] = bin_cache[file_ref] or {}
+  table.insert(bin_cache[file_ref], bin_str)
 
-      if file and chunk_byte >= 128 then
-        file:write(table.concat(chunk_data), "\n"):close()
-        chunk_data = {}
-        chunk_byte = 0
-      end
-      calculate_hps()
+  -- if we hit 2mb of data, write it to a file
+  if count_cached_bytes(#bin_str) >= 8388608 then
+    return write_to_file(bin_cache)
+  end
+end
+
+
+-- hash to binary
+local function convert_to_binary(hash)
+  for x = 1, #hash, 2 do
+    local file_ref = string.sub(hash[x], 1, 3)
+    -- append first sequence of bytes, which is the hash
+    for c = 1, 58, 16 do
+      append_binary_data(file_ref,
+        string.pack(">I16",
+          tonumber(string.sub(hash[x], c, c + 15), 16)))
+
+      --[[ -- uncommenting this will append as ASCII text
+      append_binary_data(file_ref,
+        string.sub(hash[x], c, c + 15), 16)
+      ]]
+    end
+    -- follow hash with the seed
+    for c = 1, 58, 16 do
+      append_binary_data(file_ref,
+        string.pack(">I16",
+          tonumber(string.sub(hash[x+1], c, c + 15), 16)))
+
+      --[[
+      append_binary_data(file_ref,
+        string.sub(hash[x+1], c, c + 15))
+      ]] -- make sure to comment out the binary conversion
     end
   end
 end
 
--- daemon function to poll the spawn processes for data
-local function process_work(spawn_data)
-  local recurse_flag = false
 
-  for id, worker in pairs(spawn_data.workers) do
-    if worker and worker.status then
-      -- check the pipe for data
-      local fifo = io.open(worker.fifo_pipe_id, "r")
-      if fifo then
+-- perform hashing and sliding windows
+local sha256 = dofile("sha256.lua")
 
-        for chunk in fifo:lines() do
-          if chunk == "kill" then
-            os.remove(worker.fifo_pipe_id)
-            spawn_data.workers[id] = nil
-            worker = false
+local function roll_hash(seed, hash)
 
-          elseif #chunk >= 64 then
-            spawn_data.writer.pipe(nil, chunk)
-            calculate_hps()
-          end
-        end
+  for i = 1, #seed - 31 do
+    local frame_seed = {}
 
-        fifo:close()
-      end
+    for j = i, i + 31 do
+      frame_seed[#frame_seed + 1] = seed[j]
     end
 
-    if worker then
-      recurse_flag = true
+    local frame_seed = table.concat(frame_seed)
+    local frame_hash = sha256(frame_seed)
+
+    hash[#hash + 1] = frame_hash
+    hash[#hash + 1] = frame_seed
+  end
+  return hash
+end
+
+
+-- generate randomized hex seed
+local function rbyte(b)
+  local io_file = io.open("/dev/random", "rb")
+  local rnd
+  while true do
+    rnd = string.byte(io_file:read(b))
+    if rnd >= 0 and rnd <= 255 then
+      io_file:close()
+      return rnd
     end
   end
-
-  if recurse_flag then
-    os.execute("sleep 0.1") -- stop cpu hogging
-    return process_work(spawn_data)
-  end
-
-  local pipe = pipe_closure()
-  spawn_data.writer.pipe("write", "") -- force write any remaining chunks
 end
 
 
-local function activate_spawns(spawn_data)
-  for id, userdata in pairs(spawn_data.workers) do
-      userdata.status = io.popen(userdata.pop_string)
-  end
-  return process_work(spawn_data)
+-- create hex table of our static data
+local hex_table = {}
+for x = 0, 255 do
+  hex_table[x] = string.format("%02x", x)
 end
 
 
-local function spawner()
-  local spawn_data = {workers = {}}
-  -- create our spawn processes
-  local tmp_fifo = "/tmp/fifo_"
-
-  for n = 1, num_spawns do
-    local spawn = {id}
-    local spawn_id = tostring(spawn):sub(12)
-
-    spawn = {
-      status = false,
-      fifo_pipe_id = tmp_fifo .. spawn_id,
-      pop_string = string.format("lua worker.lua %d %s", batch, spawn_id)
-    }
-    spawn_data.workers[spawn_id] = spawn
+-- hex array string with minimal entropy usage
+local function grow_seed(seed)
+  for f = 1, 64 do -- initial first hex string random bytes
+    seed[f] = hex_table[rbyte(1)]
   end
 
-  -- create our writer asap for it to create and listen to the pipe
-  local writer = {id}
-  local writer_id = tostring(writer):sub(12)
-
-  spawn_data.writer = {
-    status = io.popen(string.format("lua writer.lua %s", writer_id)),
-    pipe = pipe_closure(tmp_fifo .. writer_id)
-  }
-
-  clip.writer_id = writer_id
-  return activate_spawns(spawn_data)
+  for x = 1, 16351 do -- all hex values for all bytes of a rolling window
+    local int = tonumber(seed[x], 16)
+    local hexinc = (int + 1) % (255 + 1)
+    local newhex = hex_table[hexinc]
+    seed[#seed+1] = newhex
+  end
+  return seed
 end
 
+-- main function to orchestrate everything
 local function main()
-  io.stdout:write(
-      string.format("Processes: %d \tBatches: %d\n", num_spawns, batch)
-  ):flush()
+  local seed_table = {}
+  local hash_table = {}
 
-  spawner()
+  while dofile("signal.lua") do
+    grow_seed(seed_table)
+    roll_hash(seed_table, hash_table)
+    convert_to_binary(hash_table)
+    write_to_file(bin_cache)
 
-  -- tell the writer when work is finished, plain file to avoid pipe-hanging
-  local file = io.open("/tmp/fifo_" .. clip.writer_id, "w+")
-  file:write("kill", "\n"):close()
+    -- clear the hash and seed tables to free memory
+    for n = 1, #hash_table do
+      hash_table[n] = nil
+      seed_table[n] = nil
+    end
 
-  calculate_hps(true)
+    calculate_hps()
+  end
 end
+
+io.open("signal.lua", "w"):write("return true"):close()
 
 main()
 
