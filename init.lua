@@ -7,8 +7,8 @@
 local string, table = string, table
 local add_bytes, calculate_hps = dofile("stats.lua")
 
+
 local bin_cache = {}
--- manage or create open files
 local function write_to_file(bin_cache)
   for ref, data in pairs(bin_cache) do
     local file = io.open("data/" .. ref, "ab")
@@ -39,7 +39,7 @@ local function append_binary_data(file_ref, bin_str)
   bin_cache[file_ref] = bin_cache[file_ref] or {}
   table.insert(bin_cache[file_ref], bin_str)
 
-  -- if we hit 2mb of data, write it to a file
+  -- if we hit 8mb of data, write it to a file
   if count_cached_bytes(#bin_str) >= 8388608 then
     return write_to_file(bin_cache)
   end
@@ -50,10 +50,11 @@ end
 local function convert_to_binary(hash)
   for x = 1, #hash, 2 do
     local file_ref = string.sub(hash[x], 1, 3)
+
     -- append first sequence of bytes, which is the hash
-    for c = 1, 58, 16 do
+    for c = 1, 64, 16 do
       append_binary_data(file_ref,
-        string.pack(">I16",
+        string.pack(">I8",
           tonumber(string.sub(hash[x], c, c + 15), 16)))
 
       --[[ -- uncommenting this will append as ASCII text
@@ -62,9 +63,9 @@ local function convert_to_binary(hash)
       ]]
     end
     -- follow hash with the seed
-    for c = 1, 58, 16 do
+    for c = 1, 64, 16 do
       append_binary_data(file_ref,
-        string.pack(">I16",
+        string.pack(">I8",
           tonumber(string.sub(hash[x+1], c, c + 15), 16)))
 
       --[[
@@ -76,11 +77,10 @@ local function convert_to_binary(hash)
 end
 
 
--- perform hashing and sliding windows
+-- perform hashing and sliding window
 local sha256 = dofile("sha256.lua")
 
 local function roll_hash(seed, hash)
-
   for i = 1, #seed - 31 do
     local frame_seed = {}
 
@@ -97,35 +97,15 @@ local function roll_hash(seed, hash)
   return hash
 end
 
-
--- generate randomized hex seed
-local function rbyte(b)
-  local io_file = io.open("/dev/random", "rb")
-  local rnd
-  while true do
-    rnd = string.byte(io_file:read(b))
-    if rnd >= 0 and rnd <= 255 then
-      io_file:close()
-      return rnd
-    end
-  end
-end
-
-
 -- create hex table of our static data
 local hex_table = {}
 for x = 0, 255 do
   hex_table[x] = string.format("%02x", x)
 end
 
-
--- hex array string with minimal entropy usage
+-- increment hex values for all bytes in the seed table
 local function grow_seed(seed)
-  for f = 1, 64 do -- initial first hex string random bytes
-    seed[f] = hex_table[rbyte(1)]
-  end
-
-  for x = 1, 16351 do -- all hex values for all bytes of a rolling window
+  for x = 1, 16351 do
     local int = tonumber(seed[x], 16)
     local hexinc = (int + 1) % (255 + 1)
     local newhex = hex_table[hexinc]
@@ -134,9 +114,21 @@ local function grow_seed(seed)
   return seed
 end
 
+-- for constructing the new seed_table
+local function new_genesis(seed, seed_table)
+  for n = 1, #seed_table do -- clear old seed table
+    seed_table[n] = nil
+  end
+
+  for c = 1, #seed, 2 do
+    seed_table[#seed_table+1] = string.sub(seed, c, c+1)
+  end
+  return seed_table
+end
+
+
 -- main function to orchestrate everything
-local function main()
-  local seed_table = {}
+local function main(seed_table)
   local hash_table = {}
 
   while dofile("signal.lua") do
@@ -145,19 +137,42 @@ local function main()
     convert_to_binary(hash_table)
     write_to_file(bin_cache)
 
-    -- clear the hash and seed tables to free memory
+    new_genesis(  -- create a new seed table using a seed and salt
+      sha256(table.concat({hash_table[1], seed_table[#seed_table]})),
+      seed_table
+    )
+
     for n = 1, #hash_table do
       hash_table[n] = nil
-      seed_table[n] = nil
     end
 
     calculate_hps()
   end
 end
 
+-- write signal true incase it is in a false state
 io.open("signal.lua", "w"):write("return true"):close()
 
-main()
+-- temporary function to make genesis seed
+main((function(seed_table)
+  local function rbyte(b)
+  local io_file = io.open("/dev/random", "rb")
+    local rnd
+    while true do
+      rnd = string.byte(io_file:read(b))
+      if rnd >= 0 and rnd <= 255 then
+        io_file:close()
+        return rnd
+      end
+    end
+  end
+
+  for f = 1, 64 do
+    seed_table[f] = hex_table[rbyte(1)]
+  end
+  return seed_table
+end)({}))
+
 
 
 --==[[================================================================================]]==--

@@ -1,6 +1,6 @@
 ```lua
 --==[[=======================]]==--
---==[[ hasher          0.1.1 ]]==--
+--==[[ hasher          0.1.2 ]]==--
 --==[[ Copyright © 2024 monk ]]==--
 --==[[ MIT License           ]]==--
 --==[[=======================]]==--
@@ -70,6 +70,10 @@ ___
 ____
 
 ### Changelog
+
+  - 0.1.2
+    - fixed incorrect string.pack integer type
+    - new_genesis makes seed from previous hash+salt to minimize entropy usage
 
   - 0.1.1
     - scrapping the child processes to allow gradual improvements
