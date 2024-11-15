@@ -6,25 +6,28 @@
 
 -- requires Lua >= 5.3 to use string.pack with unsigned integer
 
+local bin = {""}
 local function hex2bin(hash_str)  -- hexadecimal to binary
-  local bin = ""
+  for x = 1, #bin do bin[x] = nil end
   for c = 1, #hash_str, 16 do
-    local hex_str = string.sub(hash_str, c, c+15)
-    local hex_int = tonumber(hex_str, 16)
-    if not hex_int then error("Invalid hexadecimal string: " .. hex_str) end
-    bin = bin .. string.pack(">I16", hex_int)
+    bin[#bin+1] =
+      string.pack(">I8",
+        tonumber(string.sub(
+          hash_str, c, c+15), 16))
   end
-  return bin
+  return table.concat(bin)
 end
 
+local hash = {""}
 local function bin2hex(bin_str)  -- binary to hexadecimal
-  local hash = ""
-  for b = 1, #bin_str, 16 do
-    local four_byte = string.sub(bin_str, b, b+15)
-    local num = string.unpack(">I16", four_byte)
-    hash = hash .. string.format("%016x", num)
+  for x = 1, #hash do hash[x] = nil end
+  for b = 1, #bin_str, 8 do
+    hash[#hash+1] =
+      string.format("%016x",
+        string.unpack(">I8",
+          string.sub(bin_str, b, b+7)))
   end
-  return hash
+  return table.concat(hash)
 end
 
 local function out(...)
@@ -70,7 +73,7 @@ local function search_archive(target_hash)
       for i = 1, #binary_chunk, 64 do  -- read 64 bytes at a time from each chunck
         local bin_hash = binary_chunk:sub(i, i+31)  -- the first 32 binary bytes is the hash
         local bin_seed = binary_chunk:sub(i+32, i+63)  -- the last 32 are the seed
-        if #bin_seed < 32 or #bin_hash < 32 then break end
+        if #bin_hash < 32 or #bin_seed < 32 then break end
 
         local archive_hash = bin2hex(bin_hash)
 
