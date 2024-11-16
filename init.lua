@@ -26,7 +26,7 @@ end
 local function byte_count()
   local bytes = 0
   return function(o)
-    bytes = o and bytes + o or 0
+    bytes = o > 0 and bytes + o or 0
     add_bytes(o)
     return bytes
   end
@@ -41,7 +41,7 @@ local function append_binary_data(file_ref, bin_str)
 
   -- if we hit 8mb of data, write it to a file
   if count_cached_bytes(#bin_str) >= 8388608 then
-    return write_to_file(bin_cache)
+    return write_to_file(bin_cache), count_cached_bytes(0)
   end
 end
 
