@@ -7,8 +7,8 @@
 local string, table = string, table
 local add_bytes, calculate_hps = dofile("stats.lua")
 
-
 local bin_cache = {}
+-- manage or create open files
 local function write_to_file(bin_cache)
   for ref, data in pairs(bin_cache) do
     local file = io.open("data/" .. ref, "ab")
@@ -97,6 +97,21 @@ local function roll_hash(seed, hash)
   return hash
 end
 
+
+-- generate randomized hex seed
+local function rbyte(b)
+  local io_file = io.open("/dev/random", "rb")
+  local rnd
+  while true do
+    rnd = string.byte(io_file:read(b))
+    if rnd >= 0 and rnd <= 255 then
+      io_file:close()
+      return rnd
+    end
+  end
+end
+
+
 -- create hex table of our static data
 local hex_table = {}
 for x = 0, 255 do
@@ -105,7 +120,11 @@ end
 
 -- increment hex values for all bytes in the seed table
 local function grow_seed(seed)
-  for x = 1, 16351 do
+  for f = 1, 64 do -- initial first hex string random bytes
+    seed[f] = hex_table[rbyte(1)]
+  end
+
+  for x = 1, 16351 do -- all hex values for all bytes of a rolling window
     local int = tonumber(seed[x], 16)
     local hexinc = (int + 1) % (255 + 1)
     local newhex = hex_table[hexinc]
@@ -114,21 +133,9 @@ local function grow_seed(seed)
   return seed
 end
 
--- for constructing the new seed_table
-local function new_genesis(seed, seed_table)
-  for n = 1, #seed_table do -- clear old seed table
-    seed_table[n] = nil
-  end
-
-  for c = 1, #seed, 2 do
-    seed_table[#seed_table+1] = string.sub(seed, c, c+1)
-  end
-  return seed_table
-end
-
-
 -- main function to orchestrate everything
-local function main(seed_table)
+local function main()
+  local seed_table = {}
   local hash_table = {}
 
   while dofile("signal.lua") do
@@ -137,42 +144,19 @@ local function main(seed_table)
     convert_to_binary(hash_table)
     write_to_file(bin_cache)
 
-    new_genesis(  -- create a new seed table using a seed and salt
-      sha256(table.concat({hash_table[1], seed_table[#seed_table]})),
-      seed_table
-    )
-
+    -- clear the hash and seed tables to free memory
     for n = 1, #hash_table do
       hash_table[n] = nil
+      seed_table[n] = nil
     end
 
     calculate_hps()
   end
 end
 
--- write signal true incase it is in a false state
 io.open("signal.lua", "w"):write("return true"):close()
 
--- temporary function to make genesis seed
-main((function(seed_table)
-  local function rbyte(b)
-  local io_file = io.open("/dev/random", "rb")
-    local rnd
-    while true do
-      rnd = string.byte(io_file:read(b))
-      if rnd >= 0 and rnd <= 255 then
-        io_file:close()
-        return rnd
-      end
-    end
-  end
-
-  for f = 1, 64 do
-    seed_table[f] = hex_table[rbyte(1)]
-  end
-  return seed_table
-end)({}))
-
+main()
 
 
 --==[[================================================================================]]==--
