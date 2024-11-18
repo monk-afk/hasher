@@ -1,6 +1,6 @@
 ```lua
 --==[[=======================]]==--
---==[[ hasher          0.1.2 ]]==--
+--==[[ hasher          0.1.3 ]]==--
 --==[[ Copyright © 2024 monk ]]==--
 --==[[ MIT License           ]]==--
 --==[[=======================]]==--
@@ -70,6 +70,9 @@ ___
 ____
 
 ### Changelog
+  - 0.1.3
+    - restored 0.1.1 due to finding duplicate hashes in the new genesis function
+    - add utils/verify.lua to check integrity of data
 
   - 0.1.2
     - fixed incorrect string.pack integer type
